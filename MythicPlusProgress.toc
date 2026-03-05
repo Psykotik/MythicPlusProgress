@@ -4,7 +4,7 @@
 ## Notes: Displays Mythic+ seasonal best runs and score.
 ## Notes-frFR: Affiche ton score Mythic+ de la saison, et tes meilleures runs.
 ## Author: Psyko
-## Version: 2
+## Version: v3
 ## SavedVariables: MythicPlusProgressDB
 ## OptionalDeps: LibSharedMedia-3.0, SharedMedia, SharedMedia_MyMedia
 
@@ -20,4 +20,5 @@
 ## Category-zhCN: 地下城和团队副本
 ## Category-zhTW: 地城與團隊
 
+MythicPlusProgress_Locales.lua
 MythicPlusProgress.lua

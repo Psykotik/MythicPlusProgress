@@ -1,4 +1,11 @@
-local ADDON_NAME = ...
+local ADDON_NAME, ns = ...
+ns = ns or {}
+local L = ns.L or function(key, ...)
+  if select("#", ...) > 0 then
+    return string.format(key, ...)
+  end
+  return key
+end
 
 local DEFAULTS = {
   displayMyKeystone = true,
@@ -6,8 +13,8 @@ local DEFAULTS = {
   locked = true,
   debug = false,
   welcome = true,
-  autoWidth = true,
   fontName = "Fira Mono Medium",
+  positionMode = "PVE_TAB1",
   customPosition = false,
   point = "TOPLEFT",
   relativePoint = "TOPLEFT",
@@ -29,6 +36,9 @@ end
 
 local function GetDB()
   MythicPlusProgressDB = CopyDefaultsInto(MythicPlusProgressDB, DEFAULTS)
+  if MythicPlusProgressDB.customPosition and MythicPlusProgressDB.positionMode == nil then
+    MythicPlusProgressDB.positionMode = "LEGACY_UI_PARENT"
+  end
   return MythicPlusProgressDB
 end
 
@@ -54,6 +64,16 @@ local COLOR_OK_GREEN = "|cff73ff73"
 local COLOR_KO_RED = "|cffF55660"
 local COLOR_WHITE = "|cffffffff"
 local COLOR_GREY = "|cffC0C0C0"
+
+local SEASON_TRANSITION_NOTICE = {
+  -- Set this to false to instantly disable the transition override.
+  enabled = true,
+  activeFromYear = 2026,
+  activeFromMonth = 3,
+  activeFromDay = 2,
+  seasonLaunchYear = 2026,
+  seasonLaunchMonth = 3,
+}
 
 local state = {
   mapIDs = nil,
@@ -265,11 +285,9 @@ local function SetDisplayRows(db, rows)
   local wantedCols = scoreWidth + gap + levelCellWidth + gap + nameColsWidth
   local wantedTotal = math.max(wantedCols, math.ceil(fullWidthWanted)) + (padding * 2)
 
-  if db.autoWidth and ui.frame and ui.frame.SetWidth then
+  if ui.frame and ui.frame.SetWidth then
     local maxWidth = UIParent and UIParent.GetWidth and (UIParent:GetWidth() - 40) or wantedTotal
     ui.frame:SetWidth(math.min(wantedTotal, maxWidth))
-  elseif ui.frame and ui.frame.SetWidth then
-    ui.frame:SetWidth(420)
   end
 
   local contentWidth = (ui.frame and ui.frame.GetWidth) and (ui.frame:GetWidth() - (padding * 2)) or 380
@@ -411,6 +429,156 @@ local function GetChestCount(mapID, completionTime, keyLevel)
   return 0
 end
 
+local REGION_CODE_BY_ID = {
+  [1] = "US",
+  [2] = "KR",
+  [3] = "EU",
+  [4] = "TW",
+  [5] = "CN",
+}
+
+local function GetCurrentRegionCode()
+  if type(GetCurrentRegion) == "function" then
+    local regionCode = REGION_CODE_BY_ID[GetCurrentRegion()]
+    if regionCode then
+      return regionCode
+    end
+  end
+
+  if type(GetCVar) == "function" then
+    local portal = tostring(GetCVar("portal") or ""):upper()
+    if portal ~= "" then
+      return portal
+    end
+  end
+
+  return "US"
+end
+
+local function IsDateBeforeUTC(epoch, year, month, day)
+  if type(epoch) ~= "number" then
+    return false
+  end
+  local dateUTC = date("!*t", epoch)
+  if not dateUTC then
+    return false
+  end
+  if dateUTC.year ~= year then
+    return dateUTC.year < year
+  end
+  if dateUTC.month ~= month then
+    return dateUTC.month < month
+  end
+  return dateUTC.day < day
+end
+
+local function GetSeasonLaunchDayByRegion(regionCode)
+  if regionCode == "EU" then
+    return 25
+  end
+  return 24
+end
+
+local function GetSeasonLaunchResetEpoch()
+  if type(GetServerTime) ~= "function" then
+    return nil
+  end
+  if type(C_DateAndTime) ~= "table" or type(C_DateAndTime.GetSecondsUntilWeeklyReset) ~= "function" then
+    return nil
+  end
+
+  local now = GetServerTime()
+  local secondsToNextReset = C_DateAndTime.GetSecondsUntilWeeklyReset()
+  if type(now) ~= "number" or type(secondsToNextReset) ~= "number" then
+    return nil
+  end
+
+  local regionCode = GetCurrentRegionCode()
+  local launchDay = GetSeasonLaunchDayByRegion(regionCode)
+  local targetReset = now + math.max(0, secondsToNextReset)
+  local weekSeconds = 7 * 24 * 60 * 60
+
+  if IsDateBeforeUTC(targetReset, SEASON_TRANSITION_NOTICE.seasonLaunchYear, SEASON_TRANSITION_NOTICE.seasonLaunchMonth, launchDay) then
+    for _ = 1, 24 do
+      if not IsDateBeforeUTC(targetReset, SEASON_TRANSITION_NOTICE.seasonLaunchYear, SEASON_TRANSITION_NOTICE.seasonLaunchMonth, launchDay) then
+        return targetReset, regionCode, launchDay
+      end
+      targetReset = targetReset + weekSeconds
+    end
+    return nil
+  end
+
+  for _ = 1, 24 do
+    local previousReset = targetReset - weekSeconds
+    if IsDateBeforeUTC(previousReset, SEASON_TRANSITION_NOTICE.seasonLaunchYear, SEASON_TRANSITION_NOTICE.seasonLaunchMonth, launchDay) then
+      return targetReset, regionCode, launchDay
+    end
+    targetReset = previousReset
+  end
+
+  return nil
+end
+
+local function FormatDuration(seconds)
+  seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+  local days = math.floor(seconds / 86400)
+  local hours = math.floor((seconds % 86400) / 3600)
+  local minutes = math.floor((seconds % 3600) / 60)
+
+  local parts = {}
+  if days > 0 then
+    table.insert(parts, string.format("%dd", days))
+  end
+  if hours > 0 or #parts > 0 then
+    table.insert(parts, string.format("%dh", hours))
+  end
+  table.insert(parts, string.format("%dm", minutes))
+  return table.concat(parts, " ")
+end
+
+local function FormatUTCDateTime(epoch)
+  if type(epoch) ~= "number" then
+    return "unknown"
+  end
+  local dt = date("!*t", epoch)
+  if not dt then
+    return "unknown"
+  end
+  return string.format("%04d-%02d-%02d %02d:%02d UTC", dt.year, dt.month, dt.day, dt.hour, dt.min)
+end
+
+local function BuildSeasonTransitionRows()
+  if not SEASON_TRANSITION_NOTICE.enabled or type(GetServerTime) ~= "function" then
+    return nil
+  end
+
+  local now = GetServerTime()
+  if type(now) ~= "number" then
+    return nil
+  end
+
+  if IsDateBeforeUTC(now, SEASON_TRANSITION_NOTICE.activeFromYear, SEASON_TRANSITION_NOTICE.activeFromMonth, SEASON_TRANSITION_NOTICE.activeFromDay) then
+    return nil
+  end
+
+  local resetEpoch, regionCode, launchDay = GetSeasonLaunchResetEpoch()
+  if type(resetEpoch) ~= "number" or now >= resetEpoch then
+    return nil
+  end
+
+  local eta = FormatDuration(resetEpoch - now)
+  local resetAt = FormatUTCDateTime(resetEpoch)
+
+  return {
+    { kind = "full", text = L("HEADER_HIGHEST_RUNS") },
+    { kind = "full", text = L("TRANSITION_IN_PROGRESS", COLOR_GREY) },
+    { kind = "full", text = L("TRANSITION_S1_NEXT_RESET", COLOR_WHITE) },
+    { kind = "full", text = L("TRANSITION_REGION_DATE", COLOR_GREY, tostring(regionCode), launchDay, SEASON_TRANSITION_NOTICE.seasonLaunchYear) },
+    { kind = "full", text = L("TRANSITION_ETA", COLOR_GREY, eta) },
+    { kind = "full", text = L("TRANSITION_UNLOCK_UTC", COLOR_GREY, resetAt) },
+  }
+end
+
 local function GetRunInfo(mapID)
   local result = {}
 
@@ -464,7 +632,7 @@ local function DisplayMyKeystone(db)
 
   local keystoneName = (type(C_ChallengeMode) == "table" and type(C_ChallengeMode.GetMapUIInfo) == "function") and C_ChallengeMode.GetMapUIInfo(ownedMapID) or tostring(ownedMapID)
   local keystoneLevel = type(C_MythicPlus.GetOwnedKeystoneLevel) == "function" and C_MythicPlus.GetOwnedKeystoneLevel() or "?"
-  return string.format("%sMy Keystone:|r %s+%s %s|r\n\n", COLOR_GREY, COLOR_NOT_DONE_YELLOW, tostring(keystoneLevel), tostring(keystoneName))
+  return L("MY_KEYSTONE", COLOR_GREY, COLOR_NOT_DONE_YELLOW, tostring(keystoneLevel), tostring(keystoneName))
 end
 
 local function FormatRunRow(entry)
@@ -502,14 +670,19 @@ local function FormatRunRow(entry)
     scoreText = "",
     levelPrefixText = "",
     levelNumberText = "",
-    nameText = string.format("%s%s|r %snot cleared yet|r", COLOR_NOT_DONE_YELLOW, tostring(name), COLOR_GREY),
+    nameText = L("NOT_CLEARED_YET", COLOR_NOT_DONE_YELLOW, tostring(name), COLOR_GREY),
   }
 end
 
 local function BuildRows(db)
+  local transitionRows = BuildSeasonTransitionRows()
+  if transitionRows then
+    return transitionRows
+  end
+
   if not state.mapIDs and not EnsureMaps() then
     return {
-      { kind = "full", text = COLOR_GREY .. "Mythic+ data not available yet.|r" },
+      { kind = "full", text = L("DATA_NOT_AVAILABLE", COLOR_GREY) },
     }
   end
 
@@ -532,18 +705,18 @@ local function BuildRows(db)
 
   local rows = {}
 
-  table.insert(rows, { kind = "full", text = "Highest Mythic+ Runs" })
+  table.insert(rows, { kind = "full", text = L("HEADER_HIGHEST_RUNS") })
 
   if type(C_PlayerInfo) == "table" and type(C_PlayerInfo.GetPlayerMythicPlusRatingSummary) == "function" then
     local ratingSummary = C_PlayerInfo.GetPlayerMythicPlusRatingSummary("player")
     if ratingSummary and (ratingSummary.currentSeasonScore or 0) > 0 then
       local totalScore = ratingSummary.currentSeasonScore
       local scoreColor = type(C_ChallengeMode) == "table" and SafeGetColor(C_ChallengeMode.GetDungeonScoreRarityColor, totalScore) or nil
-      table.insert(rows, { kind = "full", text = string.format("Total score: %s", SafeWrapColor(scoreColor, tostring(totalScore))) })
+      table.insert(rows, { kind = "full", text = L("TOTAL_SCORE", SafeWrapColor(scoreColor, tostring(totalScore))) })
     end
   end
 
-  table.insert(rows, { kind = "cols", scoreText = "Score", levelPrefixText = "", levelNumberText = "Level", nameText = "Dungeon" })
+  table.insert(rows, { kind = "cols", scoreText = L("HEADER_SCORE"), levelPrefixText = "", levelNumberText = L("HEADER_LEVEL"), nameText = L("HEADER_DUNGEON") })
 
   for _, row in ipairs(grid) do
     table.insert(rows, FormatRunRow(row))
@@ -564,15 +737,28 @@ local function IsFiniteNumber(v)
   return type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge
 end
 
-local function GetCenterOffsets(frame)
+local function GetPositionAnchorFrame(db)
+  if db and db.positionMode == "LEGACY_UI_PARENT" then
+    return UIParent
+  end
+
+  if PVEFrameTab1 and PVEFrameTab1.GetName then
+    return PVEFrameTab1
+  end
+
+  return UIParent
+end
+
+local function GetCenterOffsets(frame, relativeFrame)
+  relativeFrame = relativeFrame or UIParent
   local cx, cy = frame:GetCenter()
-  local pcx, pcy = UIParent:GetCenter()
+  local pcx, pcy = relativeFrame:GetCenter()
   if not (cx and cy and pcx and pcy) then
     return nil, nil
   end
 
   local frameScale = frame:GetEffectiveScale() or 1
-  local parentScale = UIParent:GetEffectiveScale() or 1
+  local parentScale = relativeFrame:GetEffectiveScale() or 1
   local x = ((cx * frameScale) - (pcx * parentScale)) / parentScale
   local y = ((cy * frameScale) - (pcy * parentScale)) / parentScale
   return x, y
@@ -592,17 +778,24 @@ local function HasValidSavedPosition(db)
 end
 
 local function SavePosition(frame, db)
-  local x, y = GetCenterOffsets(frame)
+  local hasTabAnchor = PVEFrameTab1 and PVEFrameTab1.GetName
+  local anchorFrame = hasTabAnchor and PVEFrameTab1 or GetPositionAnchorFrame(db)
+  local x, y = GetCenterOffsets(frame, anchorFrame)
   if IsFiniteNumber(x) and IsFiniteNumber(y) then
     db.customPosition = true
     db.point = "CENTER"
     db.relativePoint = "CENTER"
     db.x = x
     db.y = y
+    if hasTabAnchor then
+      db.positionMode = "PVE_TAB1"
+    elseif not db.positionMode then
+      db.positionMode = "LEGACY_UI_PARENT"
+    end
     return
   end
 
-  local point, _, relativePoint, fallbackX, fallbackY = frame:GetPoint(1)
+  local point, relativeTo, relativePoint, fallbackX, fallbackY = frame:GetPoint(1)
   relativePoint = relativePoint or point
   if VALID_ANCHOR_POINTS[point] and VALID_ANCHOR_POINTS[relativePoint] and IsFiniteNumber(fallbackX) and IsFiniteNumber(fallbackY) then
     db.customPosition = true
@@ -610,6 +803,11 @@ local function SavePosition(frame, db)
     db.relativePoint = relativePoint
     db.x = fallbackX
     db.y = fallbackY
+    if relativeTo == PVEFrameTab1 then
+      db.positionMode = "PVE_TAB1"
+    elseif not db.positionMode then
+      db.positionMode = "LEGACY_UI_PARENT"
+    end
   end
 end
 
@@ -617,10 +815,26 @@ local function ApplyPosition(frame, db)
   frame:ClearAllPoints()
 
   if HasValidSavedPosition(db) then
-    frame:SetPoint(db.point, UIParent, db.relativePoint, db.x, db.y)
+    local anchorFrame = GetPositionAnchorFrame(db)
+    frame:SetPoint(db.point, anchorFrame, db.relativePoint, db.x, db.y)
+
+    if db.positionMode == "LEGACY_UI_PARENT" and PVEFrameTab1 and PVEFrameTab1.GetName then
+      local x, y = GetCenterOffsets(frame, PVEFrameTab1)
+      if IsFiniteNumber(x) and IsFiniteNumber(y) then
+        db.point = "CENTER"
+        db.relativePoint = "CENTER"
+        db.x = x
+        db.y = y
+        db.positionMode = "PVE_TAB1"
+
+        frame:ClearAllPoints()
+        frame:SetPoint(db.point, PVEFrameTab1, db.relativePoint, db.x, db.y)
+      end
+    end
     return
   end
 
+  db.positionMode = "PVE_TAB1"
   db.customPosition = false
   db.point = DEFAULTS.point
   db.relativePoint = DEFAULTS.relativePoint
@@ -657,11 +871,13 @@ EnsureUI = function(db)
   frame:SetScript("OnDragStart", function(self)
     if not db.locked then
       if not db.customPosition then
-        local x, y = GetCenterOffsets(self)
+        local anchorFrame = GetPositionAnchorFrame(db)
+        local x, y = GetCenterOffsets(self, anchorFrame)
         if IsFiniteNumber(x) and IsFiniteNumber(y) then
           self:ClearAllPoints()
-          self:SetPoint("CENTER", UIParent, "CENTER", x, y)
+          self:SetPoint("CENTER", anchorFrame, "CENTER", x, y)
         end
+        db.positionMode = (anchorFrame == PVEFrameTab1) and "PVE_TAB1" or "LEGACY_UI_PARENT"
         db.customPosition = true
       end
       self:StartMoving()
@@ -759,13 +975,12 @@ local function RefreshSoon()
 end
 
 local function PrintHelp()
-  print(string.format("%s commands:", ADDON_NAME))
-  print("  /mpp - refresh")
-  print("  /mpp keystone - toggle 'My Keystone'")
-  print("  /mpp pve - toggle show only in PVE frame")
-  print("  /mpp lock | unlock - toggle dragging")
-  print("  /mpp reset - reset position")
-  print("  /mpp width - toggle auto width")
+  print(L("HELP_HEADER", ADDON_NAME))
+  print(L("HELP_REFRESH"))
+  print(L("HELP_KEYSTONE"))
+  print(L("HELP_PVE"))
+  print(L("HELP_LOCK"))
+  print(L("HELP_RESET"))
 end
 
 SLASH_MYTHICPLUSPROGRESS1 = "/mpp"
@@ -787,28 +1002,28 @@ SlashCmdList.MYTHICPLUSPROGRESS = function(msg)
   if msg == "keystone" then
     db.displayMyKeystone = not db.displayMyKeystone
     RefreshNow()
-    print(string.format("%s: displayMyKeystone = %s", ADDON_NAME, tostring(db.displayMyKeystone)))
+    print(L("STATUS_KEYSTONE", ADDON_NAME, tostring(db.displayMyKeystone)))
     return
   end
 
   if msg == "pve" then
     db.showOnlyInPVEFrame = not db.showOnlyInPVEFrame
     RefreshNow()
-    print(string.format("%s: showOnlyInPVEFrame = %s", ADDON_NAME, tostring(db.showOnlyInPVEFrame)))
+    print(L("STATUS_PVE", ADDON_NAME, tostring(db.showOnlyInPVEFrame)))
     return
   end
 
   if msg == "lock" then
     db.locked = true
     RefreshNow()
-    print(string.format("%s: locked = true", ADDON_NAME))
+    print(L("STATUS_LOCKED_TRUE", ADDON_NAME))
     return
   end
 
   if msg == "unlock" then
     db.locked = false
     RefreshNow()
-    print(string.format("%s: locked = false (drag with left mouse)", ADDON_NAME))
+    print(L("STATUS_LOCKED_FALSE", ADDON_NAME))
     return
   end
 
@@ -821,14 +1036,7 @@ SlashCmdList.MYTHICPLUSPROGRESS = function(msg)
       ApplyPosition(ui.frame, db)
     end
     RefreshNow()
-    print(string.format("%s: position reset", ADDON_NAME))
-    return
-  end
-
-  if msg == "width" then
-    db.autoWidth = not db.autoWidth
-    RefreshNow()
-    print(string.format("%s: autoWidth = %s", ADDON_NAME, tostring(db.autoWidth)))
+    print(L("STATUS_POSITION_RESET", ADDON_NAME))
     return
   end
 
@@ -862,7 +1070,7 @@ events:SetScript("OnEvent", function(_, event, arg1)
     local db = GetDB()
     if db.welcome then
       db.welcome = false
-      print(string.format("%s loaded. Type /mpp help", ADDON_NAME))
+      print(L("STATUS_LOADED", ADDON_NAME))
     end
     RefreshSoon()
     return
