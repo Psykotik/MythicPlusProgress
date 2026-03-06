@@ -63,6 +63,37 @@ local frFR = {
   STATUS_LOADED = "%s chargé. Tape /mpp help",
 }
 
+local ruRU = {
+  HELP_HEADER = "%s команды:",
+  HELP_REFRESH = "  /mpp - обновить",
+  HELP_KEYSTONE = "  /mpp keystone - вкл./выкл. отображение 'Мой М+ ключ'",
+  HELP_PVE = "  /mpp pve - Отображать только в режиме PvE",
+  HELP_LOCK = "  /mpp lock | unlock - перемещение",
+  HELP_RESET = "  /mpp reset - сбросить положение",
+
+  HEADER_HIGHEST_RUNS = "Лучшие прохождения M+",
+  HEADER_SCORE = "Результат",
+  HEADER_LEVEL = "Уровень",
+  HEADER_DUNGEON = "Подземелье",
+  TOTAL_SCORE = "Общий результат: %s",
+  MY_KEYSTONE = "%sМой М+ ключ:|r %s+%s %s|r\n\n",
+  NOT_CLEARED_YET = "%s%s|r %sещё не закончено|r",
+  DATA_NOT_AVAILABLE = "%sДанные по + в данный момент недоступны.|r",
+
+  TRANSITION_IN_PROGRESS = "%sИдет переход между сезонами.|r",
+  TRANSITION_S1_NEXT_RESET = "%sПервый сезон M+ скоро станет доступен.|r",
+  TRANSITION_REGION_DATE = "%sРегион: %s | Планируемая дата: %02d марта %d|r",
+  TRANSITION_ETA = "%sОриентировочное время перезапуска сервера: %s|r",
+  TRANSITION_UNLOCK_UTC = "%sОриентировочное время разблокировки (UTC): %s|r",
+
+  STATUS_KEYSTONE = "%s: displayMyKeystone = %s",
+  STATUS_PVE = "%s: showOnlyInPVEFrame = %s",
+  STATUS_LOCKED_TRUE = "%s: locked = true",
+  STATUS_LOCKED_FALSE = "%s: locked = false (перемещайте с помощью ЛКМ)",
+  STATUS_POSITION_RESET = "%s: сброс положения",
+  STATUS_LOADED = "%s загружен. Введите /mpp help",
+}
+
 local currentLocale = GetLocale and GetLocale() or "enUS"
 local active = enUS
 if currentLocale == "frFR" then
