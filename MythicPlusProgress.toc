@@ -5,7 +5,7 @@
 ## Notes-frFR: Affiche ton score Mythic+ de la saison, et tes meilleures runs.
 ## Notes-ruRU: Отображает лучшие прохождения М+ и результаты в текущем сезоне.
 ## Author: Psyko
-## Version: v3
+## Version: v4
 ## SavedVariables: MythicPlusProgressDB
 ## OptionalDeps: LibSharedMedia-3.0, SharedMedia, SharedMedia_MyMedia
 
